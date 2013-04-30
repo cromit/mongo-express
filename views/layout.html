@@ -52,9 +52,7 @@
             <i class="icon-chevron-down pull-right"></i>
           </li>
           <li><a href="db/{{ db }}"><i class="icon-folder-open"></i> View Database</a></li>
-            <ul class="unstyled collapse nav nav-list
-            {%- if db == dbName %} in{% endif -%}
-            " id="toggle_{{ db }}">
+            <ul class="unstyled collapse nav nav-list {%- if db == dbName %} in{% endif -%}" id="toggle_{{ db }}">
             {% for collection_db in collections -%}
               {% if loop.key == db -%}
                 {% for collection in collection_db -%}

@@ -131,6 +131,7 @@ function loadDocument(id) {
 {% for document in documents %}
 <div class="row">
 <div class="span8">
+  <span class="label label-info"><strong>_id: {{ docs[loop.index0]._id }}</strong></span>
   <textarea readonly="readonly" id="doc_{{ loop.index }}" name="doc_{{ loop.index }}">{{ document }}</textarea>
   <p>&nbsp;</p>
 
