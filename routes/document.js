@@ -47,11 +47,11 @@ exports.addDocument = function(req, res, next) {
 exports.updateDocument = function(req, res, next) {
   var doc = req.body.document;
 
-  if (doc == undefined || doc.length == 0) {
+  if (doc === undefined || doc.length === 0) {
     req.session.error = "You forgot to enter a document!";
     return res.redirect('back');
   }
-
+  //console.log("UPDATE\n" + doc);
   var docBSON;
   try {
     docBSON = bson.toBSON(doc);
@@ -62,8 +62,8 @@ exports.updateDocument = function(req, res, next) {
   }
 
   docBSON._id = req.document._id;
-
-  req.collection.update(req.document, docBSON, {safe: true}, function(err, result) {
+  //console.log("UPDATE DOC %s", req.document._id);
+  req.collection.update({ _id:req.document._id }, docBSON, {safe: true}, function(err, result) {
     if (err) {
       //document was not saved
       req.session.error = "Something went wrong: " + err;
