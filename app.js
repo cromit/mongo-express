@@ -216,6 +216,21 @@ var updateDatabases = function(admin) {
 
 //View helper, sets local variables used in templates
 app.all('*', function(req, res, next) {
+  var ip_address = null;
+  if (req.headers['x-forwarded-for']){
+    ip_address = req.headers['x-forwarded-for'];
+  }
+  else {
+    ip_address = req.connection.remoteAddress;
+  }
+
+  if (config.site.allowRemoteAddress.indexOf(ip_address) < 0) {
+    var ctx = {
+      title: "Not allowed remote address."
+    };
+    return res.render('index', ctx);
+  }
+
   res.locals.baseHref = config.site.baseUrl;
   res.locals.mongodbs = mongodbs;
 
@@ -319,9 +334,7 @@ app.param('document', function(req, res, next, id) {
 
 //mongodb middleware
 var middleware = function(req, res, next) {
-  //req.adminDb = adminDb;
   req.mongodbs = mongodbs; //List of databases
-  //req.collections = collections; //List of collection names in all databases
 
   //Allow page handlers to request an update for collection list
   req.updateCollections = updateCollections;
