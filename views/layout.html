@@ -46,21 +46,34 @@
     <div class="span3">
       <div class="well sidebar-nav">
         <ul class="nav nav-list">
-          {% for db in databases %}
-          <li class="nav-header" onclick="$('#toggle_{{ db }}').collapse('toggle')">
-            {{ db }}
-            <i class="icon-chevron-down pull-right"></i>
-          </li>
-          <li><a href="db/{{ db }}"><i class="icon-folder-open"></i> View Database</a></li>
-            <ul class="unstyled collapse nav nav-list {%- if db == dbName %} in{% endif -%}" id="toggle_{{ db }}">
-            {% for collection_db in collections -%}
-              {% if loop.key == db -%}
-                {% for collection in collection_db -%}
+          {% for dbKey in mongodbs %}
+          
+          {% set db = loop.key %}
+
+          {% if mongodbs[loop.key].err %}
+            <li class="nav-header">
+              {{ db }}
+            </li>
+            <li class="text-error">
+              <i class="icon-warning-sign pull-left" style="color:red"></i>
+              <p class="text-error">{{ mongodbs[loop.key].err }}</p>
+            </li>
+          {% else %}
+            <li class="nav-header" onclick="$('#toggle_{{ db }}').collapse('toggle')">
+              {{ db }}
+              {#
+              {{ mongodbs[loop.key].dbName }}
+              {{ loop.key }}
+              #}
+              <i class="icon-chevron-down pull-right"></i>
+            </li>
+            <li><a href="db/{{ db }}"><i class="icon-folder-open"></i> View Database</a></li>
+              <ul class="unstyled collapse nav nav-list {%- if db == dbName %} in{% endif -%}" id="toggle_{{ db }}">
+              {% for collection in collections -%}
                   <li><a href="db/{{ db }}/{{ collection }}"><i class="icon-list-alt"></i> {{ collection }}</a></li>
-                {%- endfor %}
-              {%- endif %}
-            {%- endfor %}
-            </ul>
+              {%- endfor %}
+              </ul>
+            {% endif %}
           <li class="divider"></li>
           {% endfor %}
         </ul>

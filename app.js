@@ -18,6 +18,19 @@ var app = express();
 
 var config = require('./config');
 
+// String formatting
+if (!String.prototype.format) {
+  String.prototype.format = function() {
+    var args = arguments;
+    return this.replace(/{(\d+)}/g, function(match, number) { 
+      return typeof args[number] != 'undefined'
+        ? args[number]
+        : match
+      ;
+    });
+  };
+}
+
 //Set up swig
 app.engine('html', cons.swig);
 swig.init({
@@ -33,7 +46,7 @@ app.configure(function(){
   app.set('view options', {layout: false});
   app.use(express.favicon());
   app.use(express.logger('dev'));
-  app.use(config.site.baseUrl,express.static(__dirname + '/public'));  
+  app.use(config.site.baseUrl,express.static(__dirname + '/public'));
   app.use(express.bodyParser());
   app.use(express.cookieParser(config.site.cookieSecret));
   app.use(express.session({ secret: config.site.sessionSecret }));
@@ -45,26 +58,107 @@ app.configure('development', function(){
   app.use(express.errorHandler());
 });
 
+//var connections = {};
+//var databases = [];
+//var collections = {};
+var mongodbs = {};
 
-//Set up database stuff
-var host = config.mongodb.server || 'localhost';
-var port = config.mongodb.port || mongodb.Connection.DEFAULT_PORT;
-var dbOptions = {
-  auto_reconnect: config.mongodb.autoReconnect,
-  poolSize: config.mongodb.poolSize
+/*
+  mongodbs = { 
+    HOST_DB_KEY : {
+      error : undefined,
+      dbObj : db,
+      dbName : dbName.
+      hostName : hostNAme
+      collections : {}
+    }
+  }
+*/
+
+// Initialize multiple mongodb connections
+var initMongoDBs = function() {
+  console.log("Initialize MongoDBs");
+
+  for (var dbHost in config.mongodb) {
+    var dbConfig = config.mongodb[dbHost];
+    //Set up database stuff
+    var connectionString;
+    var dbName;
+
+    if (dbConfig.connectionString === undefined) {
+      var host = dbConfig.server || 'localhost';
+      var port = dbConfig.port || mongodb.Connection.DEFAULT_PORT;
+
+      var accountInfo;
+      if (typeof dbConfig.username != "undefined" && dbConfig.username.length !== 0) {
+        accountInfo = "{0}:{1}".format(dbConfig.username, dbConfig.password);
+        dbConfig.connectionString = "mongodb://{0}:{1}@{2}:{3}/{4}".format(dbConfig.username, dbConfig.password, host, port, dbConfig.database);
+      } else {
+        dbConfig.connectionString = "mongodb://{0}:{1}/{2}".format(host, port, dbConfig.database);
+      }
+      dbName = dbConfig.database;
+    } else {
+      var url = require('url');
+      var connectionUri = url.parse(dbConfig.connectionString);
+      dbName = connectionUri.pathname.replace(/^\//, '');
+    }
+
+    console.log("Connecting to MongoDB %s:%s", dbHost, dbName);
+
+    (function(dbHost, dbName) {
+      mongodb.MongoClient.connect(dbConfig.connectionString, function(err, db) {
+        connectionKey = "{0}@{1}".format(dbName, dbHost);
+
+        if (err) {
+          mongodbs[connectionKey] = { err: err };
+          console.log("URI CONNECTING ERROR %s", err);
+          console.log(mongodbs);
+        } else {
+          mongodbs[connectionKey] = {
+            dbObj: db,
+            dbHost: dbHost,
+            dbName: dbName
+          };
+          onConnectedToDB(connectionKey);
+
+          console.log("URI CONNECTECD %s", db.databaseName);
+        }
+      });
+    })(dbHost, dbName);
+  }
 };
-var db = new mongodb.Db('local', new mongodb.Server(host, port, dbOptions));
+initMongoDBs();
 
+var onConnectedToDB = function(connectionKey) {
+  var mongodbInfo = mongodbs[connectionKey];
 
-var connections = {};
-var databases = [];
-var collections = {};
-var adminDb;
-var mainConn; //main db connection
+  console.log("OnConnect %s:%s", mongodbInfo.dbHost, mongodbInfo.dbName);
+  //Check if admin features are on
+  if (config.mongodb[mongodbInfo.dbHost].admin === true) {
+    //get admin instance
+    var adminConf = config.mongodb[mongodbInfo.dbHost];
+    var adminDb = mongodbInfo.dbObj.admin();
 
+    if (adminConf.adminUsername.length === 0) {
+      console.log('Admin Database connected');
+      updateDatabases(adminDb);
+    } else {
+      adminDb.authenticate(adminConf.adminUsername, adminConf.adminPassword, function(err, replies) {
+        if (err) {
+           console.error(err);
+        } else {
+          console.log('Admin Database connected');
+          updateDatabases(adminDb);
+        }
+      });
+    }
+  }
+
+  updateCollections(mongodbInfo.dbObj, connectionKey);
+};
 
 //Update the collections list
-var updateCollections = function(db, dbName, callback) {
+var updateCollections = function(db, connectionKey, callback) {
   db.collectionNames(function (err, result) {
     var names = [];
 
@@ -73,7 +167,7 @@ var updateCollections = function(db, dbName, callback) {
       names.push(coll.name);
     }
 
-    collections[dbName] = names.sort();
+    mongodbs[connectionKey].collections = names.sort();
 
     if (callback) {
       callback(err);
@@ -120,80 +214,19 @@ var updateDatabases = function(admin) {
 };
 
 
-//Connect to mongodb database
-db.open(function(err, db) {
-  if (err) {
-    throw err;
-  }
-
-  console.log('Database connected!');
-
-  mainConn = db;
-
-  //Check if admin features are on
-  if (config.mongodb.admin === true) {
-    //get admin instance
-    db.admin(function(err, a) {
-      adminDb = a;
-
-      if (config.mongodb.adminUsername.length == 0) {
-        console.log('Admin Database connected');
-        updateDatabases(adminDb);
-      } else {
-        //auth details were supplied, authenticate admin account with them
-        adminDb.authenticate(config.mongodb.adminUsername, config.mongodb.adminPassword, function(err, result) {
-          if (err) {
-            //TODO: handle error
-            console.error(err);
-          }
-
-          console.log('Admin Database connected');
-          updateDatabases(adminDb);
-        });
-      }
-    });
-  } else {
-    //Regular user authentication
-    if (typeof config.mongodb.auth == "undefined" || config.mongodb.auth.length == 0) {
-      throw new Error('Add auth details to config or turn on admin!');
-    }
-
-    async.forEachSeries(config.mongodb.auth, function(auth, callback) {
-      console.log("Connecting to " + auth.database + "...");
-      connections[auth.database] = mainConn.db(auth.database);
-      databases.push(auth.database);
-
-      if (typeof auth.username != "undefined" && auth.username.length != 0) {
-        connections[auth.database].authenticate(auth.username, auth.password, function(err, success) {
-          if (err) {
-            //TODO: handle error
-            console.error(err);
-          }
-
-          if (!success) {
-            console.error('Could not authenticate to database "' + auth.database + '"');
-          }
-
-          updateCollections(connections[auth.database], auth.database);
-          console.log('Connected!');
-          callback();
-        });
-      } else {
-        updateCollections(connections[auth.database], auth.database);
-        console.log('Connected!');
-        callback();
-      }
-    });
-  }
-});
-
 //View helper, sets local variables used in templates
 app.all('*', function(req, res, next) {
   res.locals.baseHref = config.site.baseUrl;
-  res.locals.databases = databases;
-  res.locals.collections = collections;
+  res.locals.mongodbs = mongodbs;
 
+  //console.trace("Here I am!");
+  //console.log(databases);
   //Flash messages
+  for (var dbKey in res.locals.mongodbs) {
+    console.log(dbKey);
+
+  }
+
   if (req.session.success) {
     res.locals.messageSuccess = req.session.success;
     delete req.session.success;
@@ -211,16 +244,20 @@ app.all('*', function(req, res, next) {
 //route param pre-conditions
 app.param('database', function(req, res, next, id) {
   //Make sure database exists
-  if (!_.include(databases, id)) {
+  console.log("Database! id:" + id);
+  
+  if ((id in mongodbs) === false) {
     req.session.error = "Database not found!";
     return res.redirect(config.site.baseUrl);
   }
 
   req.dbName = id;
+  req.collections = mongodbs[id].collections;
   res.locals.dbName = id;
+  res.locals.collections = mongodbs[id].collections;
 
-  if (connections[id] !== undefined) {
-    req.db = connections[id];
+  if (mongodbs[id] !== undefined) {
+    req.db = mongodbs[id].dbObj;
   } else {
     connections[id] = mainConn.db(id);
     req.db = connections[id];
@@ -232,7 +269,11 @@ app.param('database', function(req, res, next, id) {
 //:collection param MUST be preceded by a :database param
 app.param('collection', function(req, res, next, id) {
   //Make sure collection exists
-  if (!_.include(collections[req.dbName], id)) {
+  console.log("Collection! id:" + id);
+  
+  collections = mongodbs[req.dbName].collections;
+  //
+  if (!_.include(collections, id)) {
     req.session.error = "Collection not found!";
     return res.redirect(config.site.baseUrl+'db/' + req.dbName);
   }
@@ -240,7 +281,7 @@ app.param('collection', function(req, res, next, id) {
   req.collectionName = id;
   res.locals.collectionName = id;
 
-  connections[req.dbName].collection(id, function(err, coll) {
+  mongodbs[req.dbName].dbObj.collection(id, function(err, coll) {
     if (err || coll == null) {
       req.session.error = "Collection not found!";
       return res.redirect(config.site.baseUrl+'db/' + req.dbName);
@@ -278,9 +319,9 @@ app.param('document', function(req, res, next, id) {
 
 //mongodb middleware
 var middleware = function(req, res, next) {
-  req.adminDb = adminDb;
-  req.databases = databases; //List of database names
-  req.collections = collections; //List of collection names in all databases
+  //req.adminDb = adminDb;
+  req.mongodbs = mongodbs; //List of databases
+  //req.collections = collections; //List of collection names in all databases
 
   //Allow page handlers to request an update for collection list
   req.updateCollections = updateCollections;
@@ -305,8 +346,9 @@ app.get(config.site.baseUrl+'db/:database', middleware, routes.viewDatabase);
 
 //run as standalone App?
 if (require.main === module){
-  app.listen(config.site.port);
-  console.log("Mongo Express server listening on port " + (config.site.port || 80));
+  var port = process.env.PORT || config.site.port;
+  app.listen(port);
+  console.log("Mongo Express server listening on port " + (port || 80));
 }else{
   //as a module
   console.log('Mongo Express module ready to use on route "'+config.site.baseUrl+'*"');
